@@ -140,4 +140,60 @@ answers_test, story_maxsents, story_maxlen, query_maxlen, vocab, vocab_size = ge
 embedding_dim = 15
 
 input_story = Input((story_maxsents, story_maxlen))
-embedded_story = Embedding(vocab)
+embedded_story = Embedding(vocab_size, embedding_dim)(input_story)
+embedded_story = Lambda(lambda x: K.sum(x, axis=2))(embedded_story)
+print("input_story_.shape, embedded_story.shape:", input_story.shape, embedded_story.shape)
+
+input_question = Input((query_maxlen,))
+embedded_question = Embedding(vocab_size, embedding_dim)(input_question)
+embedded_question = Lambda(lambda x: K.sum(x, axis=1))(embedded_question)
+
+embedded_question = Reshape((1, embedding_dim))(embedded_question)
+print("inp_q.shape, emb_q.shape:", input_question.shape, embedded_question.shape)
+
+x = dot([embedded_story, embedded_question], 2)
+x = Reshape((story_maxsents,))(x)
+x = Activation('softmax')(x)
+story_weights = Reshape((story_maxsents, 1))(x)
+print("story_weights.shape:", story_weights.shape)
+
+x = dot([story_weights, embedded_story], 1)
+x = Reshape((embedding_dim,))(x)
+ans = Dense(vocab_size, activation='softmax')(x)
+
+model = Model([input_story, input_question], ans)
+
+model.compile(
+    optimizer=RMSprop(lr=1e-2),
+    loss='sparse_categorical_crossentropy',
+    metrics=['accuracy']
+
+)
+model.summary()
+r = model.fit(
+    [inputs_train, queries_train],
+    answers_train,
+    epochs=4,
+    batch_size=32,
+    validation_data=([inputs_test, queries_test], answers_test)
+)
+
+debug_model = Model([input_story, input_question], story_weights)
+
+story_idx = np.random.choice(len(train_stories))
+
+i = inputs_train[story_idx:story_idx+1]
+q = queries_train[story_idx:story_idx+1]
+w = debug_model.predict([i, q]).flatten()
+
+story, question, ans = train_stories[story_idx]
+print("story:\n")
+for i, line in enumerate(story):
+  print("{:1.5f}".format(w[i]), "\t", " ".join(line))
+
+print("question:", " ".join(question))
+print("answer:", ans)
+
+
+# pause so we can see the output
+input("Hit enter to continue\n\n")
