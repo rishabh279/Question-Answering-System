@@ -195,5 +195,87 @@ print("question:", " ".join(question))
 print("answer:", ans)
 
 
+
 # pause so we can see the output
 input("Hit enter to continue\n\n")
+
+### two supporting facts ###
+
+train_stories, test_stories, inputs_train, queries_train, answers_train, inputs_test, queries_test, \
+answers_test, story_maxsents, story_maxlen, query_maxlen, vocab, vocab_size = get_data('single_supporting_fact_10k')
+
+embedding_dim = 30
+
+
+def embed_and_sum(x, axis=2):
+    x = Embedding(vocab_size, embedding_dim)(x)
+    x = Lambda(lambda x: K.sum(x, axis))(x)
+    return x
+
+
+input_story = Input((story_maxsents, story_maxlen))
+input_question = Input((query_maxlen, ))
+
+embedded_story = embed_and_sum(input_story)
+embedded_question = embed_and_sum(input_question, 1)
+
+dense_layer = Dense(embedding_dim, activation='elu')
+
+
+def hop(query, story):
+
+    x = Reshape((1, embedding_dim))(query)
+    x = dot([story, x], 2)
+    x = Reshape((story_maxsents,))(x)
+    x = Activation('softmax')(x)
+    story_weights = Reshape((story_maxsents, 1))(x)
+
+    story_embedding2 = embed_and_sum(input_story)
+    x = dot([story_weights, story_embedding2], 1)
+    x = Reshape((embedding_dim, ))(x)
+    x = dense_layer(x)
+    return x, story_embedding2, story_weights
+
+
+ans1, embedded_story, story_weights1 = hop(embedded_question, embedded_story)
+ans2, _, story_weights2 = hop(ans1, embedded_story)
+
+ans = Dense(vocab_size, activation='softmax')(ans2)
+
+model2 = Model([input_story, input_question], ans)
+
+model2.compile(
+    optimizer=RMSprop(lr=5e-3),
+    loss='sparse_categorical_crossentropy',
+    metrics=['accuracy']
+)
+
+r = model2.fit(
+    [inputs_train, queries_train],
+    answers_train,
+    epochs=1,
+    batch_size=32,
+    validation_data=([inputs_test, queries_test], answers_test)
+)
+
+debug_model2 = Model(
+    [input_story, input_question],
+    [story_weights1, story_weights2]
+)
+
+story_idx = np.random.choice(len(train_stories))
+
+i = inputs_train[story_idx:story_idx+1]
+q = queries_train[story_idx:story_idx+1]
+w1, w2 = debug_model2.predict([i, q])
+w1 = w1.flatten()
+w2 = w2.flatten()
+
+story, question, ans = train_stories[story_idx]
+print("story:\n")
+for j, line in enumerate(story):
+  print("{:1.5f}".format(w1[j]), "\t", "{:1.5f}".format(w2[j]), "\t", " ".join(line))
+
+print("question:", " ".join(question))
+print("answer:", ans)
+print("prediction:", vocab[ np.argmax(model2.predict([i, q])[0])])
